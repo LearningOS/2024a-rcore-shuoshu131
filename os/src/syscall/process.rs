@@ -1,7 +1,9 @@
 //! Process management syscalls
+// use core::borrow::Borrow;
+
 use crate::{
     config::MAX_SYSCALL_NUM,
-    task::{exit_current_and_run_next, suspend_current_and_run_next, TaskStatus},
+    task::{exit_current_and_run_next, get_current_task_id, suspend_current_and_run_next, get_task_live_time, get_syscall_times, get_task_status, TaskStatus},
     timer::get_time_us,
 };
 
@@ -16,11 +18,11 @@ pub struct TimeVal {
 #[allow(dead_code)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
-    status: TaskStatus,
+    status: TaskStatus, // 任务目前状态
     /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
+    syscall_times: [u32; MAX_SYSCALL_NUM], // 系统调用次数统计
     /// Total running time of task
-    time: usize,
+    time: usize, // 任务运行总时间
 }
 
 /// task exits and submit an exit code
@@ -53,5 +55,13 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// YOUR JOB: Finish sys_task_info to pass testcases
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info");
-    -1
+    let current_id = get_current_task_id();
+    unsafe {
+        *_ti = TaskInfo {
+            status : get_task_status(current_id),
+            syscall_times : get_syscall_times(current_id),
+            time : get_task_live_time(current_id),
+        }
+    }
+    0
 }

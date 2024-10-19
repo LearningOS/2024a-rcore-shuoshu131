@@ -14,9 +14,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -54,6 +55,8 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            init_time: get_time_ms(),
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -135,6 +138,42 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Get current task's id
+    fn get_current_task_id(&self) ->usize {
+        let inner = self.inner.exclusive_access();
+        let task_id = inner.current_task;
+        task_id
+    }
+
+    /// Get the status of the task by id
+    fn get_task_status(&self, task_id: usize) -> TaskStatus{
+        let inner = self.inner.exclusive_access();
+        let status = inner.tasks[task_id].task_status;
+        drop(inner);
+        status
+    }
+
+    /// Caculate the time of task by id
+    fn get_task_live_time(&self, task_id: usize) -> usize {
+        get_time_ms() - self.inner.exclusive_access().tasks[task_id].init_time
+    }
+
+    /// Return the times of the syscall in task
+    fn get_syscall_times(&self, task_id :usize) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let syscall_times = inner.tasks[task_id].syscall_times;
+        drop(inner);
+        syscall_times
+    }
+
+    /// Add the times of the syscall
+    pub fn add_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current_id = inner.current_task;
+        inner.tasks[current_id].syscall_times[syscall_id] += 1;
+        drop(inner);
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +207,24 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Get current task's id
+pub fn get_current_task_id() -> usize {
+    TASK_MANAGER.get_current_task_id()
+}
+
+/// Get the task's status
+pub fn get_task_status(task_id :usize ) -> TaskStatus {
+    TASK_MANAGER.get_task_status(task_id)
+}
+
+/// Get the task's live time
+pub fn get_task_live_time(task_id: usize) -> usize {
+    TASK_MANAGER.get_task_live_time(task_id)
+}
+
+/// Get the times in the task to use syscall 
+pub fn get_syscall_times(task_id :usize) -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_syscall_times(task_id)
 }
