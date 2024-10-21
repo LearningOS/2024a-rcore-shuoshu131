@@ -17,6 +17,7 @@ mod task;
 use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::syscall::TaskInfo;
 use crate::timer::get_time_ms;
 use lazy_static::*;
 use switch::__switch;
@@ -55,8 +56,13 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
-            syscall_times: [0; MAX_SYSCALL_NUM],
-            init_time: get_time_ms(),
+            // syscall_times: [0; MAX_SYSCALL_NUM],
+            // init_time: get_time_ms(),
+            task_info: TaskInfo {
+                status: TaskStatus::UnInit,
+                syscall_times: [0; MAX_SYSCALL_NUM],
+                time: 0,
+            }
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -156,13 +162,15 @@ impl TaskManager {
 
     /// Caculate the time of task by id
     fn get_task_live_time(&self, task_id: usize) -> usize {
-        get_time_ms() - self.inner.exclusive_access().tasks[task_id].init_time
+        let inner = self.inner.exclusive_access();
+        let task_live_time = get_time_ms() - inner.tasks[task_id].task_info.time;
+        task_live_time
     }
 
     /// Return the times of the syscall in task
     fn get_syscall_times(&self, task_id :usize) -> [u32; MAX_SYSCALL_NUM] {
         let inner = self.inner.exclusive_access();
-        let syscall_times = inner.tasks[task_id].syscall_times;
+        let syscall_times = inner.tasks[task_id].task_info.syscall_times;
         drop(inner);
         syscall_times
     }
@@ -171,7 +179,7 @@ impl TaskManager {
     pub fn add_syscall_times(&self, syscall_id: usize) {
         let mut inner = self.inner.exclusive_access();
         let current_id = inner.current_task;
-        inner.tasks[current_id].syscall_times[syscall_id] += 1;
+        inner.tasks[current_id].task_info.syscall_times[syscall_id] += 1;
         drop(inner);
     }
 }

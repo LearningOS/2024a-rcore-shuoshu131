@@ -7,22 +7,26 @@ use crate::{
     timer::get_time_us,
 };
 
+/// Represents a time value with seconds and microseconds.
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
+    /// Seconds part of the time value.
     pub sec: usize,
+    /// Microseconds part of the time value.
     pub usec: usize,
 }
 
 /// Task information
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
-    status: TaskStatus, // 任务目前状态
+    pub status: TaskStatus, // 任务目前状态
     /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM], // 系统调用次数统计
+    pub syscall_times: [u32; MAX_SYSCALL_NUM], // 系统调用次数统计
     /// Total running time of task
-    time: usize, // 任务运行总时间
+    pub time: usize, // 任务运行总时间
 }
 
 /// task exits and submit an exit code

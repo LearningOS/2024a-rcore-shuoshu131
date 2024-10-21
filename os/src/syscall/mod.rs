@@ -27,7 +27,7 @@ mod fs;
 mod process;
 
 use fs::*;
-use process::*;
+pub use process::*;
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
     TASK_MANAGER.add_syscall_times(syscall_id);
