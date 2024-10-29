@@ -14,13 +14,16 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::PAGE_SIZE;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
+pub use crate::syscall::TaskInfo;
 
 pub use context::TaskContext;
 
@@ -153,6 +156,74 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Get the current task's info
+    fn get_current_task_info(&self) -> TaskInfo {
+        let inner = self.inner.exclusive_access();
+        inner.tasks[inner.current_task].task_info
+    }
+
+    /// Increase the Times of syscalls_times
+    fn increase_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].task_info.syscall_times[syscall_id] += 1;
+    }
+
+    /// Get the Time
+    fn get_task_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.tasks[inner.current_task].task_info.time
+    }
+
+    /// Apply for the memory
+    fn apply_memory(&self ,start: usize, len: usize, port: usize) -> isize {
+        if start % PAGE_SIZE != 0 {
+            return -1;
+        }
+
+        if port & !0x7 != 0 || port & 0x7 == 0 {
+            return -1;
+        }
+
+        let mut inner = self.inner.exclusive_access();
+        let start_address = VirtAddr::from(start);
+        let end_address = VirtAddr::from(start + len);
+        let permission = MapPermission::from_bits((port as u8) << 1).unwrap() | MapPermission::U;
+        let id = inner.current_task;
+        let current_task = &mut inner.tasks[id];
+
+        if current_task.memory_set.include_range(start_address, end_address) {
+            return -1;
+        }
+
+        current_task.memory_set.insert_framed_area(start_address, end_address, permission);
+        0
+    }
+
+    /// Release the mem used to apply
+    fn release_memory(&self, start: usize, len: usize) -> isize {
+        if start % PAGE_SIZE != 0 {
+            return -1;
+        }
+    
+        let mut inner = self.inner.exclusive_access();
+        let start_address = VirtAddr::from(start);
+        let end_address = VirtAddr::from(start + len);
+        let id = inner.current_task;
+        let current_task = &mut inner.tasks[id];
+
+        if !start_address.aligned() || !end_address.aligned() {
+            return -1;
+        }
+        
+        if !current_task.memory_set.include_range(start_address, end_address) {
+            return -1;
+        }
+    
+        current_task.memory_set.remove_from_frame_area(start_address, end_address);
+        0
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +272,29 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Get the current 'Running' task's task info
+pub fn get_current_task_info() -> TaskInfo {
+    TASK_MANAGER.get_current_task_info()
+}
+
+/// Increase the num of syscall times
+pub fn increase_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.increase_syscall_times(syscall_id)
+}
+
+/// Get the Time
+pub fn get_task_time() -> usize {
+    TASK_MANAGER.get_task_time()
+}
+
+/// get mem
+pub fn get_mem(start: usize, len: usize, port: usize) ->isize {
+    TASK_MANAGER.apply_memory(start, len, port)
+}
+
+/// release the mem
+pub fn release_mem(start: usize, len: usize) -> isize {
+    TASK_MANAGER.release_memory(start, len)
 }
