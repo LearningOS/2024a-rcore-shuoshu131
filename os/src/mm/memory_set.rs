@@ -300,6 +300,33 @@ impl MemorySet {
             false
         }
     }
+    
+    /// Check The Address is in Mem
+    pub fn include_range(& self ,start: VirtAddr,end: VirtAddr) -> bool {
+        for area in &self.areas {
+            if area.vpn_range.get_start() < end.ceil() && area.vpn_range.get_end() > start.floor() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Remove the frame from MapArea
+    pub fn remove_from_frame_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+
+        if let Some(index) = self.areas.iter().position(|area| {
+            area.vpn_range.get_start() == start_vpn && area.vpn_range.get_end() == end_vpn
+        }) {
+            self.areas[index].unmap(&mut self.page_table);
+            self.areas.remove(index);
+        }
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

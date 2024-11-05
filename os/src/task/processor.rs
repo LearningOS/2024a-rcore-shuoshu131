@@ -11,7 +11,10 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::syscall::TaskInfo;
+use crate::config::PAGE_SIZE;
 
+use crate::mm::{MapPermission, VirtAddr};
 /// Processor management structure
 pub struct Processor {
     ///The task currently executing on the current processor
@@ -44,6 +47,75 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+
+    /// Get the infomation
+    pub fn get_current_task_info(&self) -> Option<TaskInfo>{
+        if let Some(current_task) = &self.current {
+            let task_inner = current_task.inner_exclusive_access();
+            let info = task_inner.get_info();
+            Some(info)
+        }
+        else {
+            None
+        }
+    }
+
+    /// add syscall times
+    pub fn add_systimes(&self, syscall_id: usize) {
+        self.current.as_ref().unwrap().inner_exclusive_access().add_systimes(syscall_id);
+    }
+
+    /// apply the mem
+    fn apply_memory(&self, start: usize, len: usize, port: usize) -> isize {
+        if start % PAGE_SIZE != 0 {
+            return -1;
+        }
+
+        if port & !0x7 != 0 || port & 0x7 == 0 {
+            return -1;
+        }
+        if let Some(current_task_arc) = &self.current {
+            let mut inner = current_task_arc.inner_exclusive_access();
+            let start_address = VirtAddr::from(start);
+            let end_address = VirtAddr::from(start + len);
+            let permission = MapPermission::from_bits((port as u8) << 1).unwrap() | MapPermission::U;
+            let current_task = &mut inner;
+
+            if current_task.memory_set.include_range(start_address, end_address) {
+                return -1;
+            }
+
+            current_task.memory_set.insert_framed_area(start_address, end_address, permission);
+            return 0;
+        }
+        -1
+    }
+
+    /// release the mem
+    fn release_memory(&self, start: usize, len: usize) -> isize {
+        if start % PAGE_SIZE != 0 {
+            return -1;
+        }
+
+        if let Some(current_task_arc) = &self.current {
+            let mut inner = current_task_arc.inner_exclusive_access();
+            let start_address = VirtAddr::from(start);
+            let end_address = VirtAddr::from(start + len);
+            let current_task = &mut inner;
+
+            if !start_address.aligned() || !end_address.aligned() {
+                return -1;
+            }
+
+            if !current_task.memory_set.include_range(start_address, end_address) {
+                return -1;
+            }
+
+            current_task.memory_set.remove_from_frame_area(start_address, end_address);
+            return 0;
+        }
+        -1
+    }
 }
 
 lazy_static! {
@@ -61,6 +133,7 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            task_inner.task_info.status = TaskStatus::Running;
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -108,4 +181,24 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Get the current task info
+pub fn get_current_task_info() -> TaskInfo {
+    PROCESSOR.exclusive_access().get_current_task_info().unwrap()
+}
+
+/// Add the syscall times
+pub fn add_systimes(syscall_id: usize) {
+    PROCESSOR.exclusive_access().add_systimes(syscall_id);
+}
+
+/// get mem
+pub fn get_mem(start: usize, len: usize, port: usize) ->isize {
+    PROCESSOR.exclusive_access().apply_memory(start, len, port)
+}
+
+/// release the mem
+pub fn release_mem(start: usize, len: usize) -> isize {
+    PROCESSOR.exclusive_access().release_memory(start, len)
 }

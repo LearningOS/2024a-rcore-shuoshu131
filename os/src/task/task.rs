@@ -4,13 +4,17 @@ use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
-use crate::timer::{get_time, get_time_ms};
+use crate::timer::get_time_ms;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
 
 use crate::syscall::TaskInfo;
+
+#[allow(unused)]
+/// Big Stride
+pub const BIG_STRIDE: isize = 1_000_000;
 
 /// Task control block structure
 ///
@@ -37,6 +41,7 @@ impl TaskControlBlock {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
     }
+
 }
 
 pub struct TaskControlBlockInner {
@@ -74,6 +79,12 @@ pub struct TaskControlBlockInner {
 
     /// TaskInfo
     pub task_info: TaskInfo,
+
+    /// stride 
+    pub stride: isize,
+
+    /// priority
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -90,6 +101,12 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+    pub fn get_info(&self) -> TaskInfo {
+        self.task_info
+    }
+    pub fn add_systimes(&mut self, syscall_id: usize) {
+        self.task_info.syscall_times[syscall_id] += 1; 
     }
 }
 
@@ -126,9 +143,11 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     task_info: TaskInfo {
                         status: TaskStatus::Ready,
-                        syscall_times: [0,500],
+                        syscall_times: [0;500],
                         time:get_time_ms(),
                     },
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -204,15 +223,16 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     task_info: TaskInfo {
                         status: TaskStatus::Ready,
-                        syscall_times: [0,500],
+                        syscall_times: [0;500],
                         time:get_time_ms(),
                     },
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
         // add child
         parent_inner.children.push(task_control_block.clone());
-        // modify kernel_sp in trap_cx
         // **** access child PCB exclusively
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
         trap_cx.kernel_sp = kernel_stack_top;
@@ -251,6 +271,15 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// spawn process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new_tcb = Arc::new(TaskControlBlock::new(elf_data));
+        let mut inner = self.inner_exclusive_access();
+        new_tcb.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        inner.children.push(new_tcb.clone());
+        new_tcb
     }
 }
 
